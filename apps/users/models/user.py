@@ -16,7 +16,7 @@ from django.db import models
 from django.shortcuts import reverse
 from django.utils import timezone
 from django.utils.module_loading import import_string
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from common.db import fields, models as jms_models
 from common.utils import (
@@ -668,7 +668,33 @@ class MFAMixin:
         return backend
 
 
-class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, AbstractUser):
+class JSONFilterMixin:
+    """
+    users = JSONManyToManyField('users.User', blank=True, null=True)
+    """
+
+    @staticmethod
+    def get_json_filter_attr_q(name, value, match):
+        from rbac.models import RoleBinding
+        from orgs.utils import current_org
+
+        if name == 'system_roles':
+            user_id = RoleBinding.objects \
+                .filter(role__in=value, scope='system') \
+                .values_list('user_id', flat=True)
+            return models.Q(id__in=user_id)
+        elif name == 'org_roles':
+            kwargs = dict(role__in=value, scope='org')
+            if not current_org.is_root():
+                kwargs['org_id'] = current_org.id
+
+            user_id = RoleBinding.objects.filter(**kwargs) \
+                .values_list('user_id', flat=True)
+            return models.Q(id__in=user_id)
+        return None
+
+
+class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, JSONFilterMixin, AbstractUser):
     class Source(models.TextChoices):
         local = 'local', _('Local')
         ldap = 'ldap', 'LDAP/AD'
@@ -677,14 +703,15 @@ class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, AbstractUser):
         cas = 'cas', 'CAS'
         saml2 = 'saml2', 'SAML2'
         oauth2 = 'oauth2', 'OAuth2'
+        wecom = 'wecom', _('WeCom')
+        dingtalk = 'dingtalk', _('DingTalk')
+        feishu = 'feishu', _('FeiShu')
         custom = 'custom', 'Custom'
 
     SOURCE_BACKEND_MAPPING = {
         Source.local: [
             settings.AUTH_BACKEND_MODEL,
             settings.AUTH_BACKEND_PUBKEY,
-            settings.AUTH_BACKEND_WECOM,
-            settings.AUTH_BACKEND_DINGTALK,
         ],
         Source.ldap: [
             settings.AUTH_BACKEND_LDAP
@@ -704,6 +731,15 @@ class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, AbstractUser):
         ],
         Source.oauth2: [
             settings.AUTH_BACKEND_OAUTH2
+        ],
+        Source.wecom: [
+            settings.AUTH_BACKEND_WECOM
+        ],
+        Source.feishu: [
+            settings.AUTH_BACKEND_FEISHU
+        ],
+        Source.dingtalk: [
+            settings.AUTH_BACKEND_DINGTALK
         ],
         Source.custom: [
             settings.AUTH_BACKEND_CUSTOM
@@ -775,9 +811,9 @@ class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, AbstractUser):
         default=False, verbose_name=_('Need update password')
     )
     date_updated = models.DateTimeField(auto_now=True, verbose_name=_('Date updated'))
-    wecom_id = models.CharField(null=True, default=None, unique=True, max_length=128, verbose_name=_('WeCom'))
-    dingtalk_id = models.CharField(null=True, default=None, unique=True, max_length=128, verbose_name=_('DingTalk'))
-    feishu_id = models.CharField(null=True, default=None, unique=True, max_length=128, verbose_name=_('FeiShu'))
+    wecom_id = models.CharField(null=True, default=None, max_length=128, verbose_name=_('WeCom'))
+    dingtalk_id = models.CharField(null=True, default=None, max_length=128, verbose_name=_('DingTalk'))
+    feishu_id = models.CharField(null=True, default=None, max_length=128, verbose_name=_('FeiShu'))
 
     DATE_EXPIRED_WARNING_DAYS = 5
 
@@ -909,6 +945,11 @@ class User(AuthMixin, TokenMixin, RoleMixin, MFAMixin, AbstractUser):
     class Meta:
         ordering = ['username']
         verbose_name = _("User")
+        unique_together = (
+            ('dingtalk_id',),
+            ('wecom_id',),
+            ('feishu_id',),
+        )
         permissions = [
             ('invite_user', _('Can invite user')),
             ('remove_user', _('Can remove user')),

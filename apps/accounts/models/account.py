@@ -1,5 +1,5 @@
 from django.db import models
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from simple_history.models import HistoricalRecords
@@ -89,18 +89,31 @@ class Account(AbsConnectivity, BaseAccount):
         return bool(self.secret)
 
     @classmethod
+    def get_special_account(cls, name):
+        if name == AliasAccount.INPUT.value:
+            return cls.get_manual_account()
+        elif name == AliasAccount.ANON.value:
+            return cls.get_anonymous_account()
+        else:
+            return cls(name=name, username=name, secret=None)
+
+    @classmethod
     def get_manual_account(cls):
         """ @INPUT 手动登录的账号(any) """
         return cls(name=AliasAccount.INPUT.label, username=AliasAccount.INPUT.value, secret=None)
 
-    @lazyproperty
-    def versions(self):
-        return self.history.count()
+    @classmethod
+    def get_anonymous_account(cls):
+        return cls(name=AliasAccount.ANON.label, username=AliasAccount.ANON.value, secret=None)
 
     @classmethod
     def get_user_account(cls):
         """ @USER 动态用户的账号(self) """
         return cls(name=AliasAccount.USER.label, username=AliasAccount.USER.value, secret=None)
+
+    @lazyproperty
+    def versions(self):
+        return self.history.count()
 
     def get_su_from_accounts(self):
         """ 排除自己和以自己为 su-from 的账号 """
@@ -108,6 +121,11 @@ class Account(AbsConnectivity, BaseAccount):
 
 
 class AccountTemplate(BaseAccount):
+    su_from = models.ForeignKey(
+        'self', related_name='su_to', null=True,
+        on_delete=models.SET_NULL, verbose_name=_("Su from")
+    )
+
     class Meta:
         verbose_name = _('Account template')
         unique_together = (
@@ -117,6 +135,24 @@ class AccountTemplate(BaseAccount):
             ('view_accounttemplatesecret', _('Can view asset account template secret')),
             ('change_accounttemplatesecret', _('Can change asset account template secret')),
         ]
+
+    @classmethod
+    def get_su_from_account_templates(cls, pk=None):
+        if pk is None:
+            return cls.objects.all()
+        return cls.objects.exclude(Q(id=pk) | Q(su_from_id=pk))
+
+    def __str__(self):
+        return f'{self.name}({self.username})'
+
+    def get_su_from_account(self, asset):
+        su_from = self.su_from
+        if su_from and asset.platform.su_enabled:
+            account = asset.accounts.filter(
+                username=su_from.username,
+                secret_type=su_from.secret_type
+            ).first()
+            return account
 
     def __str__(self):
         return self.username

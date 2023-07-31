@@ -1,11 +1,12 @@
 from typing import Iterable, AnyStr
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import APIException
 
-from common.utils.common import get_logger
-from common.sdk.im.utils import digest, DictWrapper, update_values, set_default
 from common.sdk.im.mixin import RequestMixin, BaseRequest
+from common.sdk.im.utils import digest, update_values
+from common.utils.common import get_logger
+from users.utils import construct_user_email
 
 logger = get_logger(__name__)
 
@@ -18,7 +19,7 @@ class WeComError(APIException):
 class URL:
     GET_TOKEN = 'https://qyapi.weixin.qq.com/cgi-bin/gettoken'
     SEND_MESSAGE = 'https://qyapi.weixin.qq.com/cgi-bin/message/send'
-    QR_CONNECT = 'https://open.work.weixin.qq.com/wwopen/sso/qrConnect'
+    QR_CONNECT = 'https://login.work.weixin.qq.com/wwlogin/sso/login'
     OAUTH_CONNECT = 'https://open.weixin.qq.com/connect/oauth2/authorize'
 
     # https://open.work.weixin.qq.com/api/doc/90000/90135/91437
@@ -111,13 +112,13 @@ class WeCom(RequestMixin):
         update_values(extra_params, kwargs)
 
         body = {
-           "touser": '|'.join(users),
-           "msgtype": "text",
-           "agentid": self._agentid,
-           "text": {
-               "content": msg
-           },
-           **extra_params
+            "touser": '|'.join(users),
+            "msgtype": "text",
+            "agentid": self._agentid,
+            "text": {
+                "content": msg
+            },
+            **extra_params
         }
         if markdown:
             body['msgtype'] = 'markdown'
@@ -151,10 +152,7 @@ class WeCom(RequestMixin):
 
     def get_user_id_by_code(self, code):
         # # https://open.work.weixin.qq.com/api/doc/90000/90135/91437
-
-        params = {
-            'code': code,
-        }
+        params = {'code': code}
         data = self._requests.get(URL.GET_USER_ID_BY_CODE, params=params, check_errcode_is_0=False)
 
         errcode = data['errcode']
@@ -175,12 +173,14 @@ class WeCom(RequestMixin):
             logger.error(f'WeCom response 200 but get field from json error: fields=UserId|OpenId')
             raise WeComError
 
-    def get_user_detail(self, id):
+    def get_user_detail(self, user_id, **kwargs):
         # https://open.work.weixin.qq.com/api/doc/90000/90135/90196
-
-        params = {
-            'userid': id,
-        }
-
+        params = {'userid': user_id}
         data = self._requests.get(URL.GET_USER_DETAIL, params)
-        return data
+        username = data.get('userid')
+        name = data.get('name', username)
+        email = data.get('email') or data.get('biz_mail')
+        email = construct_user_email(username, email)
+        return {
+            'username': username, 'name': name, 'email': email
+        }

@@ -8,14 +8,13 @@ from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import models
 from django.utils import timezone
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from assets.const import Protocol
 from assets.models import Asset
 from common.utils import get_object_or_none, lazyproperty
 from orgs.mixins.models import OrgModelMixin
 from terminal.backends import get_multi_command_storage
-from terminal.const import SessionType
+from terminal.const import SessionType, TerminalType
 from users.models import User
 
 
@@ -48,8 +47,8 @@ class Session(OrgModelMixin):
 
     upload_to = 'replay'
     ACTIVE_CACHE_KEY_PREFIX = 'SESSION_ACTIVE_{}'
-    SUFFIX_MAP = {1: '.gz', 2: '.replay.gz', 3: '.cast.gz'}
-    DEFAULT_SUFFIXES = ['.replay.gz', '.cast.gz', '.gz']
+    SUFFIX_MAP = {1: '.gz', 2: '.replay.gz', 3: '.cast.gz', 4: '.replay.mp4'}
+    DEFAULT_SUFFIXES = ['.replay.gz', '.cast.gz', '.gz', '.replay.mp4']
 
     # Todo: 将来干掉 local_path, 使用 default storage 实现
     def get_all_possible_local_path(self):
@@ -112,6 +111,7 @@ class Session(OrgModelMixin):
                     return rel_path
             except:
                 pass
+
     @property
     def asset_obj(self):
         return Asset.objects.get(id=self.asset_id)
@@ -132,10 +132,7 @@ class Session(OrgModelMixin):
         if self.type != SessionType.normal:
             # 会话监控仅支持 normal，不支持 tunnel 和 command
             return False
-        if self.protocol in [
-            Protocol.ssh, Protocol.vnc, Protocol.rdp,
-            Protocol.telnet, Protocol.k8s
-        ]:
+        if self.terminal.type in [TerminalType.lion, TerminalType.koko]:
             return True
         else:
             return False

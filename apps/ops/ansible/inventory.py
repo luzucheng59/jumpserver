@@ -9,8 +9,11 @@ __all__ = ['JMSInventory']
 
 
 class JMSInventory:
-    def __init__(self, assets, account_policy='privileged_first',
-                 account_prefer='root,Administrator', host_callback=None, exclude_localhost=False):
+    def __init__(
+            self, assets, account_policy='privileged_first',
+            account_prefer='root,Administrator', host_callback=None,
+            exclude_localhost=False, task_type=None
+    ):
         """
         :param assets:
         :param account_prefer: account username name if not set use account_policy
@@ -22,6 +25,7 @@ class JMSInventory:
         self.host_callback = host_callback
         self.exclude_hosts = {}
         self.exclude_localhost = exclude_localhost
+        self.task_type = task_type
 
     @staticmethod
     def clean_assets(assets):
@@ -73,6 +77,7 @@ class JMSInventory:
         return var
 
     def make_account_vars(self, host, asset, account, automation, protocol, platform, gateway):
+        from accounts.const import AutomationTypes
         if not account:
             host['error'] = _("No account available")
             return host
@@ -92,6 +97,12 @@ class JMSInventory:
                 host['ansible_become_password'] = su_from.secret
             else:
                 host['ansible_become_password'] = account.secret
+        elif platform.su_enabled and not su_from and \
+                self.task_type in (AutomationTypes.change_secret, AutomationTypes.push_account):
+            host.update(self.make_account_ansible_vars(account))
+            host['ansible_become'] = True
+            host['ansible_become_user'] = 'root'
+            host['ansible_become_password'] = account.secret
         else:
             host.update(self.make_account_ansible_vars(account))
 
@@ -128,7 +139,7 @@ class JMSInventory:
                 ansible_config['ansible_winrm_server_cert_validation'] = 'ignore'
             else:
                 ansible_config['ansible_winrm_scheme'] = 'http'
-                ansible_config['ansible_winrm_transport'] = 'plaintext'
+                ansible_config['ansible_winrm_transport'] = 'ntlm'
         return ansible_config
 
     def asset_to_host(self, asset, account, automation, protocols, platform):
@@ -257,6 +268,7 @@ class JMSInventory:
         data = {'all': {'hosts': {}}}
         for host in hosts:
             name = host.pop('name')
+            name = name.replace('[', '_').replace(']', '_')
             data['all']['hosts'][name] = host
         if self.exclude_localhost and data['all']['hosts'].__contains__('localhost'):
             data['all']['hosts'].update({'localhost': {'ansible_host': '255.255.255.255'}})

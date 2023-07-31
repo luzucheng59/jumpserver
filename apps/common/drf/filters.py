@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 #
+import base64
+import json
 import logging
 
 from django.core.cache import cache
@@ -12,11 +14,15 @@ from rest_framework.serializers import ValidationError
 
 from common import const
 
+logger = logging.getLogger('jumpserver.common')
+
 __all__ = [
     "DatetimeRangeFilter", "IDSpmFilter",
     'IDInFilter', "CustomFilter",
     "BaseFilterSet"
 ]
+
+from common.db.fields import RelatedManager
 
 
 class BaseFilterSet(drf_filters.FilterSet):
@@ -66,7 +72,7 @@ class DatetimeRangeFilter(filters.BaseFilterBackend):
                         ]
                 ```
             """.format(view.name)
-            logging.error(msg)
+            logger.error(msg)
             raise ImproperlyConfigured(msg)
 
     def filter_queryset(self, request, queryset, view):
@@ -183,3 +189,32 @@ class UUIDInFilter(drf_filters.BaseInFilter, drf_filters.UUIDFilter):
 
 class NumberInFilter(drf_filters.BaseInFilter, drf_filters.NumberFilter):
     pass
+
+
+class AttrRulesFilterBackend(filters.BaseFilterBackend):
+    def get_schema_fields(self, view):
+        return [
+            coreapi.Field(
+                name='attr_rules', location='query', required=False,
+                type='string', example='/api/v1/users/users?attr_rules=jsonbase64',
+                description='Filter by json like {"type": "attrs", "attrs": []} to base64'
+            )
+        ]
+
+    def filter_queryset(self, request, queryset, view):
+        attr_rules = request.query_params.get('attr_rules')
+        if not attr_rules:
+            return queryset
+
+        try:
+            attr_rules = base64.b64decode(attr_rules.encode('utf-8'))
+        except Exception:
+            raise ValidationError({'attr_rules': 'attr_rules should be base64'})
+        try:
+            attr_rules = json.loads(attr_rules)
+        except Exception:
+            raise ValidationError({'attr_rules': 'attr_rules should be json'})
+
+        logger.debug('attr_rules: %s', attr_rules)
+        q = RelatedManager.get_to_filter_q(attr_rules, queryset.model)
+        return queryset.filter(q).distinct()

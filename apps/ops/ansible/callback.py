@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import reduce
 
 
 class DefaultCallback:
@@ -18,6 +19,7 @@ class DefaultCallback:
             failures=defaultdict(dict),
             dark=defaultdict(dict),
             skipped=defaultdict(dict),
+            ignored=defaultdict(dict),
         )
         self.summary = dict(
             ok=[],
@@ -59,6 +61,14 @@ class DefaultCallback:
         }
         self.result['ok'][host][task] = detail
 
+    def runner_on_skipped(self, event_data, host=None, task=None, **kwargs):
+        detail = {
+            'action': event_data.get('task_action', ''),
+            'res': {},
+            'rc': 0,
+        }
+        self.result['skipped'][host][task] = detail
+
     def runner_on_failed(self, event_data, host=None, task=None, res=None, **kwargs):
         detail = {
             'action': event_data.get('task_action', ''),
@@ -67,15 +77,9 @@ class DefaultCallback:
             'stdout': res.get('stdout', ''),
             'stderr': ';'.join([res.get('stderr', ''), res.get('msg', '')]).strip(';')
         }
-        self.result['failures'][host][task] = detail
-
-    def runner_on_skipped(self, event_data, host=None, task=None, **kwargs):
-        detail = {
-            'action': event_data.get('task_action', ''),
-            'res': {},
-            'rc': 0,
-        }
-        self.result['skipped'][host][task] = detail
+        ignore_errors = event_data.get('ignore_errors', False)
+        error_key = 'ignored' if ignore_errors else 'failures'
+        self.result[error_key][host][task] = detail
 
     def runner_on_unreachable(self, event_data, host=None, task=None, res=None, **kwargs):
         detail = {
@@ -105,16 +109,21 @@ class DefaultCallback:
         pass
 
     def playbook_on_stats(self, event_data, **kwargs):
-        failed = []
-        for i in ['dark', 'failures']:
-            for host, tasks in self.result[i].items():
-                failed.append(host)
-                error = ''
-                for task, detail in tasks.items():
-                    error += f'{task}: {detail["stderr"]};'
-                self.summary[i][host] = error.strip(';')
-        self.summary['ok'] = list(set(self.result['ok'].keys()) - set(failed))
-        self.summary['skipped'] = list(set(self.result['skipped'].keys()) - set(failed))
+        error_func = lambda err, task_detail: err + f"{task_detail[0]}: {task_detail[1]['stderr']};"
+        for tp in ['dark', 'failures']:
+            for host, tasks in self.result[tp].items():
+                error = reduce(error_func, tasks.items(), '').strip(';')
+                self.summary[tp][host] = error
+        failures = list(self.result['failures'].keys())
+        dark_or_failures = list(self.result['dark'].keys()) + failures
+
+        for host, tasks in self.result.get('ignored', {}).items():
+            ignore_errors = reduce(error_func, tasks.items(), '').strip(';')
+            if host in failures:
+                self.summary['failures'][host] += ignore_errors
+
+        self.summary['ok'] = list(set(self.result['ok'].keys()) - set(dark_or_failures))
+        self.summary['skipped'] = list(set(self.result['skipped'].keys()) - set(dark_or_failures))
 
     def playbook_on_include(self, event_data, **kwargs):
         pass

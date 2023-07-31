@@ -1,4 +1,3 @@
-import os
 from collections import defaultdict
 
 from django.db import models
@@ -17,6 +16,8 @@ __all__ = ['AppletHost', 'AppletHostDeployment']
 
 class AppletHost(Host):
     deploy_options = models.JSONField(default=dict, verbose_name=_('Deploy options'))
+    auto_create_accounts = models.BooleanField(default=True, verbose_name=_('Auto create accounts'))
+    accounts_create_amount = models.IntegerField(default=100, verbose_name=_('Accounts create amount'))
     inited = models.BooleanField(default=False, verbose_name=_('Inited'))
     date_inited = models.DateTimeField(null=True, blank=True, verbose_name=_('Date inited'))
     date_synced = models.DateTimeField(null=True, blank=True, verbose_name=_('Date synced'))
@@ -84,9 +85,14 @@ class AppletHost(Host):
         return random_string(16, special_char=True)
 
     def generate_accounts(self):
-        amount = int(os.getenv('TERMINAL_ACCOUNTS_AMOUNT', 100))
-        now_count = self.accounts.filter(privileged=False).count()
-        need = amount - now_count
+        if not self.auto_create_accounts:
+            return
+        self.generate_public_accounts()
+        self.generate_private_accounts()
+
+    def generate_public_accounts(self):
+        now_count = self.accounts.filter(privileged=False, username__startswith='jms').count()
+        need = self.accounts_create_amount - now_count
 
         accounts = []
         account_model = self.accounts.model
@@ -99,7 +105,31 @@ class AppletHost(Host):
                 org_id=self.LOCKING_ORG, is_active=False,
             )
             accounts.append(account)
-        bulk_create_with_history(accounts, account_model, batch_size=20)
+        bulk_create_with_history(accounts, account_model, batch_size=20, ignore_conflicts=True)
+
+    def generate_private_accounts_by_usernames(self, usernames):
+        accounts = []
+        account_model = self.accounts.model
+        for username in usernames:
+            password = self.random_password()
+            username = 'js_' + username
+            account = account_model(
+                username=username, secret=password, name=username,
+                asset_id=self.id, secret_type='password', version=1,
+                org_id=self.LOCKING_ORG, is_active=False,
+            )
+            accounts.append(account)
+        bulk_create_with_history(accounts, account_model, batch_size=20, ignore_conflicts=True)
+
+    def generate_private_accounts(self):
+        from users.models import User
+        usernames = User.objects \
+            .filter(is_active=True, is_service_account=False) \
+            .values_list('username', flat=True)
+        account_usernames = self.accounts.all().values_list('username', flat=True)
+        account_usernames = [username[3:] for username in account_usernames if username.startswith('js_')]
+        not_exist_users = set(usernames) - set(account_usernames)
+        self.generate_private_accounts_by_usernames(not_exist_users)
 
 
 class AppletHostDeployment(JMSBaseModel):

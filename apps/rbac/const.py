@@ -1,5 +1,5 @@
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 
 class Scope(models.TextChoices):
@@ -22,7 +22,8 @@ exclude_permissions = (
     ('common', 'setting', '*', '*'),
 
     ('authentication', 'privatetoken', '*', '*'),
-    ('authentication', 'connectiontoken', 'delete', 'connectiontoken'),
+    ('authentication', 'connectiontoken', 'delete,change', 'connectiontoken'),
+    ('authentication', 'connectiontoken', 'view', 'connectiontokensecret'),
     ('authentication', 'ssotoken', '*', '*'),
     ('authentication', 'superconnectiontoken', 'change,delete', 'superconnectiontoken'),
     ('authentication', 'temptoken', 'delete', 'temptoken'),
@@ -91,7 +92,7 @@ exclude_permissions = (
     ('audits', 'activitylog', 'add,delete,change', 'activitylog'),
     ('audits', 'passwordchangelog', 'add,change,delete', 'passwordchangelog'),
     ('audits', 'userloginlog', 'add,change,delete,change', 'userloginlog'),
-    ('audits', 'ftplog', 'change,delete', 'ftplog'),
+    ('audits', 'ftplog', 'delete', 'ftplog'),
     ('tickets', 'ticketassignee', '*', 'ticketassignee'),
     ('tickets', 'ticketflow', 'add,delete', 'ticketflow'),
     ('tickets', 'comment', '*', '*'),
@@ -148,6 +149,8 @@ only_system_permissions = (
     ('orgs', 'organization', 'view', 'rootorg'),
     ('terminal', 'applet', '*', '*'),
     ('terminal', 'applethost', '*', '*'),
+    ('acls', 'loginacl', '*', '*'),
+    ('acls', 'connectmethodacl', '*', '*')
 )
 
 only_org_permissions = (

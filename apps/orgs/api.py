@@ -2,7 +2,7 @@
 #
 
 from django.conf import settings
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.generics import RetrieveAPIView
 
@@ -62,7 +62,7 @@ class OrgViewSet(JMSBulkModelViewSet):
             msg = _('The current organization ({}) cannot be deleted').format(current_org)
             raise PermissionDenied(detail=msg)
 
-        if str(instance.id) == settings.AUTH_LDAP_SYNC_ORG_ID:
+        if str(instance.id) in settings.AUTH_LDAP_SYNC_ORG_IDS:
             msg = _(
                 'LDAP synchronization is set to the current organization. '
                 'Please switch to another organization before deleting'

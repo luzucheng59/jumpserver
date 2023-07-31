@@ -22,7 +22,7 @@ __all__ = [
 
 class AccountViewSet(OrgBulkModelViewSet):
     model = Account
-    search_fields = ('username', 'asset__address', 'name')
+    search_fields = ('username', 'name', 'asset__name', 'asset__address')
     filterset_class = AccountFilterSet
     serializer_classes = {
         'default': serializers.AccountSerializer,
@@ -32,6 +32,7 @@ class AccountViewSet(OrgBulkModelViewSet):
         'su_from_accounts': 'accounts.view_account',
         'clear_secret': 'accounts.change_account',
     }
+    export_as_zip = True
 
     @action(methods=['get'], detail=False, url_path='su-from-accounts')
     def su_from_accounts(self, request, *args, **kwargs):
@@ -51,20 +52,21 @@ class AccountViewSet(OrgBulkModelViewSet):
         return Response(data=serializer.data)
 
     @action(
-        methods=['get'], detail=False, url_path='username-suggestions',
+        methods=['post'], detail=False, url_path='username-suggestions',
         permission_classes=[IsValidUser]
     )
     def username_suggestions(self, request, *args, **kwargs):
-        asset_ids = request.query_params.get('assets')
-        node_keys = request.query_params.get('keys')
-        username = request.query_params.get('username')
+        asset_ids = request.data.get('assets')
+        node_ids = request.data.get('nodes')
+        username = request.data.get('username')
 
         assets = Asset.objects.all()
         if asset_ids:
-            assets = assets.filter(id__in=asset_ids.split(','))
-        if node_keys:
-            patten = Node.get_node_all_children_key_pattern(node_keys.split(','))
-            assets = assets.filter(nodes__key__regex=patten)
+            assets = assets.filter(id__in=asset_ids)
+        if node_ids:
+            nodes = Node.objects.filter(id__in=node_ids)
+            node_asset_ids = Node.get_nodes_all_assets(*nodes).values_list('id', flat=True)
+            assets = assets.filter(id__in=set(list(asset_ids) + list(node_asset_ids)))
 
         accounts = Account.objects.filter(asset__in=assets)
         if username:

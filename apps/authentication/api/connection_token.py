@@ -3,31 +3,32 @@ import json
 import os
 import urllib.parse
 
+from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.translation import ugettext_lazy as _
-from rest_framework import status
+from django.utils.translation import gettext_lazy as _
+from rest_framework import status, serializers
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework.serializers import ValidationError
 
-from assets.const import CloudTypes
+from accounts.const import AliasAccount
 from common.api import JMSModelViewSet
 from common.exceptions import JMSException
-from common.utils import random_string, get_logger
+from common.utils import random_string, get_logger, get_request_ip
 from common.utils.django import get_request_os
-from common.utils.http import is_true
+from common.utils.http import is_true, is_false
 from orgs.mixins.api import RootOrgViewMixin
 from perms.models import ActionChoices
 from terminal.connect_methods import NativeClient, ConnectMethodUtil
-from terminal.models import EndpointRule
+from terminal.models import EndpointRule, Endpoint
 from ..models import ConnectionToken, date_expired_default
 from ..serializers import (
     ConnectionTokenSerializer, ConnectionTokenSecretSerializer,
-    SuperConnectionTokenSerializer, ConnectTokenAppletOptionSerializer
+    SuperConnectionTokenSerializer, ConnectTokenAppletOptionSerializer,
+    ConnectionTokenReusableSerializer,
 )
 
 __all__ = ['ConnectionTokenViewSet', 'SuperConnectionTokenViewSet']
@@ -63,6 +64,15 @@ class RDPFileClientProtocolURLMixin:
             'use redirection server name:i': '0',
             'smart sizing:i': '1',
         }
+        # 设置多屏显示
+        multi_mon = is_true(self.request.query_params.get('multi_mon'))
+        if multi_mon:
+            rdp_options['use multimon:i'] = '1'
+
+        # 设置多屏显示
+        multi_mon = is_true(self.request.query_params.get('multi_mon'))
+        if multi_mon:
+            rdp_options['use multimon:i'] = '1'
 
         # 设置磁盘挂载
         drives_redirect = is_true(self.request.query_params.get('drives_redirect'))
@@ -88,7 +98,8 @@ class RDPFileClientProtocolURLMixin:
         if width and height:
             rdp_options['desktopwidth:i'] = width
             rdp_options['desktopheight:i'] = height
-            rdp_options['winposstr:s:'] = f'0,1,0,0,{width},{height}'
+            rdp_options['winposstr:s'] = f'0,1,0,0,{width},{height}'
+            rdp_options['dynamic resolution:i'] = '0'
 
         # 设置其他选项
         rdp_options['session bpp:i'] = os.getenv('JUMPSERVER_COLOR_DEPTH', '32')
@@ -101,7 +112,7 @@ class RDPFileClientProtocolURLMixin:
 
         rdp = token.asset.platform.protocols.filter(name='rdp').first()
         if rdp and rdp.setting.get('console'):
-            rdp_options['administrative session:i:'] = '1'
+            rdp_options['administrative session:i'] = '1'
 
         # 文件名
         name = token.asset.name
@@ -164,11 +175,13 @@ class RDPFileClientProtocolURLMixin:
         return data
 
     def get_smart_endpoint(self, protocol, asset=None):
-        target_ip = asset.get_target_ip() if asset else ''
-        endpoint = EndpointRule.match_endpoint(
-            target_instance=asset, target_ip=target_ip,
-            protocol=protocol, request=self.request
-        )
+        endpoint = Endpoint.match_by_instance_label(asset, protocol)
+        if not endpoint:
+            target_ip = asset.get_target_ip() if asset else ''
+            endpoint = EndpointRule.match_endpoint(
+                target_instance=asset, target_ip=target_ip,
+                protocol=protocol, request=self.request
+            )
         return endpoint
 
 
@@ -210,6 +223,18 @@ class ExtraActionApiMixin(RDPFileClientProtocolURLMixin):
         instance.expire()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(methods=['PATCH'], detail=True, url_path='reuse')
+    def reuse(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not settings.CONNECTION_TOKEN_REUSABLE:
+            error = _('Reusable connection token is not allowed, global setting not enabled')
+            raise serializers.ValidationError(error)
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        is_reusable = serializer.validated_data.get('is_reusable', False)
+        instance.set_reusable(is_reusable)
+        return Response(data=serializer.data)
+
     @action(methods=['POST'], detail=False)
     def exchange(self, request, *args, **kwargs):
         pk = request.data.get('id', None) or request.data.get('pk', None)
@@ -230,13 +255,16 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
     search_fields = filterset_fields
     serializer_classes = {
         'default': ConnectionTokenSerializer,
+        'reuse': ConnectionTokenReusableSerializer,
     }
+    http_method_names = ['get', 'post', 'patch', 'head', 'options', 'trace']
     rbac_perms = {
         'list': 'authentication.view_connectiontoken',
         'retrieve': 'authentication.view_connectiontoken',
         'create': 'authentication.add_connectiontoken',
         'exchange': 'authentication.add_connectiontoken',
-        'expire': 'authentication.change_connectiontoken',
+        'reuse': 'authentication.reuse_connectiontoken',
+        'expire': 'authentication.expire_connectiontoken',
         'get_rdp_file': 'authentication.add_connectiontoken',
         'get_client_protocol_url': 'authentication.add_connectiontoken',
     }
@@ -277,15 +305,16 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
         data['org_id'] = asset.org_id
         data['user'] = user
         data['value'] = random_string(16)
+
+        if account_name == AliasAccount.ANON and asset.category not in ['web', 'custom']:
+            raise ValidationError(_('Anonymous account is not supported for this asset'))
+
         account = self._validate_perm(user, asset, account_name)
         if account.has_secret:
             data['input_secret'] = ''
 
-        if account.username != '@INPUT':
+        if account.username != AliasAccount.INPUT:
             data['input_username'] = ''
-        if account.username == '@USER':
-            data['input_username'] = user.username
-
         ticket = self._validate_acl(user, asset, account)
         if ticket:
             data['from_ticket'] = ticket
@@ -306,13 +335,15 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
 
     def _validate_acl(self, user, asset, account):
         from acls.models import LoginAssetACL
-        acl = LoginAssetACL.filter_queryset(user, asset, account).valid().first()
+        acls = LoginAssetACL.filter_queryset(user, asset, account)
+        ip = get_request_ip(self.request)
+        acl = LoginAssetACL.get_match_rule_acls(user, ip, acls)
         if not acl:
             return
         if acl.is_action(acl.ActionChoices.accept):
             return
         if acl.is_action(acl.ActionChoices.reject):
-            msg = _('ACL action is reject')
+            msg = _('ACL action is reject: {}({})'.format(acl.name, acl.id))
             raise JMSException(code='acl_reject', detail=msg)
         if acl.is_action(acl.ActionChoices.review):
             if not self.request.query_params.get('create_ticket'):
@@ -334,7 +365,7 @@ class SuperConnectionTokenViewSet(ConnectionTokenViewSet):
     rbac_perms = {
         'create': 'authentication.add_superconnectiontoken',
         'renewal': 'authentication.add_superconnectiontoken',
-        'get_secret_detail': 'authentication.view_connectiontokensecret',
+        'get_secret_detail': 'authentication.view_superconnectiontokensecret',
         'get_applet_info': 'authentication.view_superconnectiontoken',
         'release_applet_account': 'authentication.view_superconnectiontoken',
     }
@@ -364,25 +395,32 @@ class SuperConnectionTokenViewSet(ConnectionTokenViewSet):
     @action(methods=['POST'], detail=False, url_path='secret')
     def get_secret_detail(self, request, *args, **kwargs):
         """ 非常重要的 api, 在逻辑层再判断一下 rbac 权限, 双重保险 """
-        rbac_perm = 'authentication.view_connectiontokensecret'
+        rbac_perm = 'authentication.view_superconnectiontokensecret'
         if not request.user.has_perm(rbac_perm):
             raise PermissionDenied('Not allow to view secret')
 
         token_id = request.data.get('id') or ''
         token = get_object_or_404(ConnectionToken, pk=token_id)
-        if token.is_expired:
-            raise ValidationError({'id': 'Token is expired'})
-
         token.is_valid()
         serializer = self.get_serializer(instance=token)
-        expire_now = request.data.get('expire_now', True)
 
-        # TODO 暂时特殊处理 k8s 不过期
-        if token.asset.type == CloudTypes.K8S:
-            expire_now = False
+        expire_now = request.data.get('expire_now', None)
+        asset_type = token.asset.type
+        # 设置默认值
+        if expire_now is None:
+            # TODO 暂时特殊处理 k8s 不过期
+            if asset_type in ['k8s', 'kubernetes']:
+                expire_now = False
+            else:
+                expire_now = not settings.CONNECTION_TOKEN_REUSABLE
 
-        if expire_now:
+        if is_false(expire_now):
+            logger.debug('Api specified, now expire now')
+        elif token.is_reusable and settings.CONNECTION_TOKEN_REUSABLE:
+            logger.debug('Token is reusable, not expire now')
+        else:
             token.expire()
+
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(methods=['POST'], detail=False, url_path='applet-option')

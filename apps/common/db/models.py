@@ -10,13 +10,12 @@
 """
 
 import uuid
-from functools import reduce
 
 from django.db import models
 from django.db import transaction
 from django.db.models import F, ExpressionWrapper, CASCADE
 from django.db.models import QuerySet
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..const.signals import SKIP_SIGNAL
 
@@ -55,7 +54,6 @@ def output_as_string(field_name):
 
 
 class MultiTableChildQueryset(QuerySet):
-
     def bulk_create(self, objs, batch_size=None):
         assert batch_size is None or batch_size > 0
         if not objs:

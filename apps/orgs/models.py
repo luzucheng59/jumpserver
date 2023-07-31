@@ -1,5 +1,5 @@
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from common.db.models import JMSBaseModel
 from common.tree import TreeNode
@@ -9,10 +9,21 @@ logger = get_logger(__name__)
 
 
 class OrgRoleMixin:
+    ROOT_ID = '00000000-0000-0000-0000-000000000000'
+    ROOT_NAME = _('GLOBAL')
+    DEFAULT_ID = '00000000-0000-0000-0000-000000000002'
+    DEFAULT_NAME = _('DEFAULT')
+    SYSTEM_ID = '00000000-0000-0000-0000-000000000004'
+    SYSTEM_NAME = _('SYSTEM')
     members: models.Manager
+    id: str
 
     def get_members(self):
-        return self.members.all().distinct()
+        from users.models import User
+        if self.id == self.ROOT_ID:
+            return User.objects.all().exclude(is_service_account=True)
+        else:
+            return self.members.all().distinct()
 
     def add_member(self, user, role=None):
         from rbac.builtin import BuiltinRole
@@ -72,12 +83,6 @@ class Organization(OrgRoleMixin, JMSBaseModel):
         'users.User', related_name='orgs', through='rbac.RoleBinding', through_fields=('org', 'user')
     )
 
-    ROOT_ID = '00000000-0000-0000-0000-000000000000'
-    ROOT_NAME = _('GLOBAL')
-    DEFAULT_ID = '00000000-0000-0000-0000-000000000002'
-    DEFAULT_NAME = _('DEFAULT')
-    SYSTEM_ID = '00000000-0000-0000-0000-000000000004'
-    SYSTEM_NAME = _('SYSTEM')
     orgs_mapping = None
 
     class Meta:

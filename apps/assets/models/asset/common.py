@@ -6,8 +6,9 @@ import logging
 from collections import defaultdict
 
 from django.db import models
+from django.db.models import Q
 from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from assets import const
 from common.db.fields import EncryptMixin
@@ -116,7 +117,32 @@ class Protocol(models.Model):
         return self.asset_platform_protocol.get('public', True)
 
 
-class Asset(NodesRelationMixin, AbsConnectivity, JMSOrgBaseModel):
+class JSONFilterMixin:
+    @staticmethod
+    def get_json_filter_attr_q(name, value, match):
+        """
+        :param name: 属性名称
+        :param value: 定义的结果
+        :param match: 匹配方式
+        :return:
+        """
+        from ..node import Node
+        if not isinstance(value, (list, tuple)):
+            value = [value]
+        if name == 'nodes':
+            nodes = Node.objects.filter(id__in=value)
+            children = Node.get_nodes_all_children(nodes, with_self=True).values_list('id', flat=True)
+            return Q(nodes__in=children)
+        elif name == 'category':
+            return Q(platform__category__in=value)
+        elif name == 'type':
+            return Q(platform__type__in=value)
+        elif name == 'protocols':
+            return Q(protocols__name__in=value)
+        return None
+
+
+class Asset(NodesRelationMixin, AbsConnectivity, JSONFilterMixin, JMSOrgBaseModel):
     Category = const.Category
     Type = const.AllTypes
 
@@ -180,15 +206,14 @@ class Asset(NodesRelationMixin, AbsConnectivity, JMSOrgBaseModel):
     @lazyproperty
     def auto_config(self):
         platform = self.platform
-        automation = self.platform.automation
         auto_config = {
             'su_enabled': platform.su_enabled,
             'domain_enabled': platform.domain_enabled,
             'ansible_enabled': False
         }
+        automation = getattr(self.platform, 'automation', None)
         if not automation:
             return auto_config
-
         auto_config.update(model_to_dict(automation))
         return auto_config
 

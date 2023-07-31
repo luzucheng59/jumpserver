@@ -1,8 +1,13 @@
 # coding: utf-8
 #
 
-import os
 import json
+from collections import defaultdict
+from copy import deepcopy
+
+from django.conf import settings
+from django.core.cache import cache
+from django.utils.translation import gettext_lazy as _
 from ldap3 import Server, Connection, SIMPLE
 from ldap3.core.exceptions import (
     LDAPSocketOpenError,
@@ -18,19 +23,15 @@ from ldap3.core.exceptions import (
     LDAPConfigurationError,
     LDAPAttributeError,
 )
-from django.conf import settings
-from django.core.cache import cache
-from django.utils.translation import ugettext_lazy as _
-from copy import deepcopy
-from collections import defaultdict
-from orgs.utils import tmp_to_org
 
-from common.const import LDAP_AD_ACCOUNT_DISABLE
-from common.utils import timeit, get_logger
-from common.db.utils import close_old_connections
-from users.utils import construct_user_email
-from users.models import User, UserGroup
 from authentication.backends.ldap import LDAPAuthorizationBackend, LDAPUser
+from common.const import LDAP_AD_ACCOUNT_DISABLE
+from common.db.utils import close_old_connections
+from common.utils import timeit, get_logger
+from common.utils.http import is_true
+from orgs.utils import tmp_to_org
+from users.models import User, UserGroup
+from users.utils import construct_user_email
 
 logger = get_logger(__file__)
 
@@ -185,9 +186,12 @@ class LDAPServerUtil(object):
             if not hasattr(entry, mapping):
                 continue
             value = getattr(entry, mapping).value or ''
-            if attr == 'is_active' and mapping.lower() == 'useraccountcontrol' \
-                    and value:
-                value = int(value) & LDAP_AD_ACCOUNT_DISABLE != LDAP_AD_ACCOUNT_DISABLE
+            if attr == 'is_active':
+                if mapping.lower() == 'useraccountcontrol' and value:
+                    value = int(value) & LDAP_AD_ACCOUNT_DISABLE != LDAP_AD_ACCOUNT_DISABLE
+                else:
+                    value = is_true(value)
+
             if attr == 'groups' and mapping.lower() == 'memberof':
                 # AD: {'groups': 'memberOf'}
                 if isinstance(value, str) and value:
@@ -394,7 +398,7 @@ class LDAPImportUtil(object):
             group_names.append(group_name)
         return group_names
 
-    def perform_import(self, users, org=None):
+    def perform_import(self, users, orgs):
         logger.info('Start perform import ldap users, count: {}'.format(len(users)))
         errors = []
         objs = []
@@ -416,13 +420,20 @@ class LDAPImportUtil(object):
                 errors.append({user['username']: str(e)})
                 logger.error(e)
                 continue
+        for org in orgs:
+            self.bind_org(org, objs, group_users_mapper)
+        logger.info('End perform import ldap users')
+        return errors
+
+    @staticmethod
+    def bind_org(org, users, group_users_mapper):
         if not org:
             return
         if org.is_root():
             return
         # add user to org
-        for obj in objs:
-            org.add_member(obj)
+        for user in users:
+            org.add_member(user)
         # add user to group
         with tmp_to_org(org):
             for group_name, users in group_users_mapper.items():
@@ -430,8 +441,6 @@ class LDAPImportUtil(object):
                     name=group_name, defaults={'name': group_name}
                 )
                 group.users.add(*users)
-        logger.info('End perform import ldap users')
-        return errors
 
 
 class LDAPTestUtil(object):

@@ -3,7 +3,9 @@
 
 from rest_framework import serializers
 
-__all__ = ['PublicSettingSerializer', 'PrivateSettingSerializer']
+__all__ = [
+    'PublicSettingSerializer', 'PrivateSettingSerializer', 'ServerInfoSerializer'
+]
 
 
 class PublicSettingSerializer(serializers.Serializer):
@@ -16,11 +18,12 @@ class PrivateSettingSerializer(PublicSettingSerializer):
     OLD_PASSWORD_HISTORY_LIMIT_COUNT = serializers.IntegerField()
     TICKET_AUTHORIZE_DEFAULT_TIME = serializers.IntegerField()
     TICKET_AUTHORIZE_DEFAULT_TIME_UNIT = serializers.CharField()
-    AUTH_LDAP_SYNC_ORG_ID = serializers.CharField()
+    AUTH_LDAP_SYNC_ORG_IDS = serializers.ListField()
     SECURITY_MAX_IDLE_TIME = serializers.IntegerField()
     SECURITY_VIEW_AUTH_NEED_MFA = serializers.BooleanField()
     SECURITY_MFA_VERIFY_TTL = serializers.IntegerField()
     SECURITY_COMMAND_EXECUTION = serializers.BooleanField()
+    SECURITY_COMMAND_BLACKLIST = serializers.ListField()
     SECURITY_PASSWORD_EXPIRATION_TIME = serializers.IntegerField()
     SECURITY_LUNA_REMEMBER_AUTH = serializers.BooleanField()
     SECURITY_WATERMARK_ENABLED = serializers.BooleanField()
@@ -48,3 +51,8 @@ class PrivateSettingSerializer(PublicSettingSerializer):
     ANNOUNCEMENT = serializers.DictField()
 
     TICKETS_ENABLED = serializers.BooleanField()
+    CONNECTION_TOKEN_REUSABLE = serializers.BooleanField()
+
+
+class ServerInfoSerializer(serializers.Serializer):
+    CURRENT_TIME = serializers.DateTimeField()

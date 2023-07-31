@@ -8,6 +8,8 @@ from common.db.models import JMSBaseModel
 
 __all__ = ['Platform', 'PlatformProtocol', 'PlatformAutomation']
 
+from common.utils import lazyproperty
+
 
 class PlatformProtocol(models.Model):
     name = models.CharField(max_length=32, verbose_name=_('Name'))
@@ -26,13 +28,10 @@ class PlatformProtocol(models.Model):
     def secret_types(self):
         return Protocol.settings().get(self.name, {}).get('secret_types', ['password'])
 
-    def set_public(self):
-        private_protocol_set = ('winrm',)
-        self.public = self.name not in private_protocol_set
-
-    def save(self, **kwargs):
-        self.set_public()
-        return super().save(**kwargs)
+    @lazyproperty
+    def port_from_addr(self):
+        from assets.const.protocol import Protocol as ProtocolConst
+        return ProtocolConst.settings().get(self.name, {}).get('port_from_addr', False)
 
 
 class PlatformAutomation(models.Model):

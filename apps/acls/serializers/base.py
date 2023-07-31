@@ -1,11 +1,11 @@
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
-from acls.models.base import ActionChoices
-from common.serializers.fields import LabeledChoiceField, ObjectRelatedField
+from acls.models.base import BaseACL
+from common.serializers.fields import JSONManyToManyField, LabeledChoiceField
 from jumpserver.utils import has_valid_xpack_license
 from orgs.models import Organization
-from users.models import User
+from ..const import ActionChoices
 
 common_help_text = _(
     "With * indicating a match all. "
@@ -21,7 +21,7 @@ class ACLUsersSerializer(serializers.Serializer):
     )
 
 
-class ACLAssestsSerializer(serializers.Serializer):
+class ACLAssetsSerializer(serializers.Serializer):
     address_group_help_text = _(
         "With * indicating a match all. "
         "Such as: "
@@ -61,57 +61,34 @@ class ActionAclSerializer(serializers.Serializer):
         super().__init__(*args, **kwargs)
         self.set_action_choices()
 
-    def set_action_choices(self):
-        action = self.fields.get("action")
-        if not action:
-            return
-        choices = action.choices
-        if not has_valid_xpack_license():
-            choices.pop(ActionChoices.review, None)
-        action._choices = choices
-
-
-class BaseUserAssetAccountACLSerializerMixin(ActionAclSerializer, serializers.Serializer):
-    users = ACLUsersSerializer(label=_('User'))
-    assets = ACLAssestsSerializer(label=_('Asset'))
-    accounts = ACLAccountsSerializer(label=_('Account'))
-    users_username_group = serializers.ListField(
-        source='users.username_group', read_only=True, child=serializers.CharField(),
-        label=_('User (username)')
-    )
-    assets_name_group = serializers.ListField(
-        source='assets.name_group', read_only=True, child=serializers.CharField(),
-        label=_('Asset (name)')
-    )
-    assets_address_group = serializers.ListField(
-        source='assets.address_group', read_only=True, child=serializers.CharField(),
-        label=_('Asset (address)')
-    )
-    accounts_username_group = serializers.ListField(
-        source='accounts.username_group', read_only=True, child=serializers.CharField(),
-        label=_('Account (username)')
-    )
-    reviewers = ObjectRelatedField(
-        queryset=User.objects, many=True, required=False, label=_('Reviewers')
-    )
-    reviewers_amount = serializers.IntegerField(
-        read_only=True, source="reviewers.count", label=_('Reviewers amount')
-    )
-
     class Meta:
+        action_choices_exclude = [ActionChoices.warning]
+
+    def set_action_choices(self):
+        field_action = self.fields.get("action")
+        if not field_action:
+            return
+        if not has_valid_xpack_license():
+            field_action._choices.pop(ActionChoices.review, None)
+        for choice in self.Meta.action_choices_exclude:
+            field_action._choices.pop(choice, None)
+
+
+class BaseACLSerializer(ActionAclSerializer, serializers.Serializer):
+    class Meta(ActionAclSerializer.Meta):
+        model = BaseACL
         fields_mini = ["id", "name"]
         fields_small = fields_mini + [
-            'users_username_group', 'assets_address_group', 'assets_name_group',
-            'accounts_username_group',
-            "users", "accounts", "assets", "is_active",
-            "date_created", "date_updated", "priority",
-            "action", "comment", "created_by", "org_id",
+            "is_active", "priority", "action",
+            "date_created", "date_updated",
+            "comment", "created_by", "org_id",
         ]
-        fields_m2m = ["reviewers", "reviewers_amount"]
+        fields_m2m = ["reviewers", ]
         fields = fields_small + fields_m2m
         extra_kwargs = {
             "priority": {"default": 50},
             "is_active": {"default": True},
+            'reviewers': {'label': _('Recipients')},
         }
 
     def validate_reviewers(self, reviewers):
@@ -133,3 +110,18 @@ class BaseUserAssetAccountACLSerializerMixin(ActionAclSerializer, serializers.Se
             )
             raise serializers.ValidationError(error)
         return valid_reviewers
+
+
+class BaseUserACLSerializer(BaseACLSerializer):
+    users = JSONManyToManyField(label=_('User'))
+
+    class Meta(BaseACLSerializer.Meta):
+        fields = BaseACLSerializer.Meta.fields + ['users']
+
+
+class BaseUserAssetAccountACLSerializer(BaseUserACLSerializer):
+    assets = JSONManyToManyField(label=_('Asset'))
+    accounts = serializers.ListField(label=_('Account'))
+
+    class Meta(BaseUserACLSerializer.Meta):
+        fields = BaseUserACLSerializer.Meta.fields + ['assets', 'accounts']

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from accounts.const import SecretType
@@ -78,4 +78,8 @@ class BaseAccountSerializer(AuthValidateMixin, BulkOrgResourceModelSerializer):
         ]
         extra_kwargs = {
             'spec_info': {'label': _('Spec info')},
+            'username': {'help_text': _(
+                "Tip: If no username is required for authentication, fill in `null`, "
+                "If AD account, like `username@domain`"
+            )},
         }

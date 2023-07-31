@@ -1,12 +1,12 @@
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
-from ops.mixin import PeriodTaskSerializerMixin
 from assets.models import Asset, Node, BaseAutomation, AutomationExecution
-from orgs.mixins.serializers import BulkOrgResourceModelSerializer
-from common.utils import get_logger
 from common.const.choices import Trigger
 from common.serializers.fields import ObjectRelatedField, LabeledChoiceField
+from common.utils import get_logger
+from ops.mixin import PeriodTaskSerializerMixin
+from orgs.mixins.serializers import BulkOrgResourceModelSerializer
 
 logger = get_logger(__file__)
 
@@ -48,14 +48,17 @@ class AutomationExecutionSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def get_snapshot(obj):
-        tp = obj.snapshot['type']
+        from assets.const import AutomationTypes as AssetTypes
+        from accounts.const import AutomationTypes as AccountTypes
+        tp_dict = dict(AssetTypes.choices) | dict(AccountTypes.choices)
+        tp = obj.snapshot.get('type', '')
         snapshot = {
-            'type': tp,
-            'name': obj.snapshot['name'],
-            'comment': obj.snapshot['comment'],
-            'accounts': obj.snapshot['accounts'],
-            'node_amount': len(obj.snapshot['nodes']),
-            'asset_amount': len(obj.snapshot['assets']),
+            'type': {'value': tp, 'label': tp_dict.get(tp, tp)},
+            'name': obj.snapshot.get('name'),
+            'comment': obj.snapshot.get('comment'),
+            'accounts': obj.snapshot.get('accounts'),
+            'node_amount': len(obj.snapshot.get('nodes', [])),
+            'asset_amount': len(obj.snapshot.get('assets', [])),
         }
         return snapshot
 

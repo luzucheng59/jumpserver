@@ -24,9 +24,13 @@ class DeployOptionsSerializer(serializers.Serializer):
         (4, _('Per Session')),
         (2, _('Per Device')),
     )
+
+    # 单用户单会话，
+    # 默认值为1，表示启用状态（组策略默认值），此时单用户只能有一个会话连接
+    # 如果改为 0 ，表示禁用状态，此时可以单用户多会话连接
     SESSION_PER_USER = (
-        (1, _("Disabled")),
-        (0, _("Enabled")),
+        (0, _("Disabled")),
+        (1, _("Enabled")),
     )
 
     CORE_HOST = serializers.CharField(
@@ -58,11 +62,19 @@ class AppletHostSerializer(HostSerializer):
     class Meta(HostSerializer.Meta):
         model = AppletHost
         fields = HostSerializer.Meta.fields + [
+            'auto_create_accounts', 'accounts_create_amount',
             'load', 'date_synced', 'deploy_options'
         ]
         extra_kwargs = {
             **HostSerializer.Meta.extra_kwargs,
-            'date_synced': {'read_only': True}
+            'date_synced': {'read_only': True},
+            'auto_create_accounts': {'help_text': _(
+                'These accounts are used to connect to the published application, '
+                'the account is now divided into two types, one is dedicated to each account, '
+                'each user has a private account, the other is public, '
+                'when the application does not support multiple open and the special has been used, '
+                'the public account will be used to connect')},
+            'accounts_create_amount': {'help_text': _('The number of public accounts created automatically')},
         }
 
     def __init__(self, *args, data=None, **kwargs):
